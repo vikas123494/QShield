@@ -1,6 +1,10 @@
 """Tests for the Isolation Forest detector."""
 import pytest
-from qshield.monitor.anomaly import FEATURE_COLUMNS, IsolationForestAnomalyDetector
+from qshield.monitor.anomaly import (
+    FEATURE_COLUMNS,
+    IsolationForestAnomalyDetector,
+    evaluate_labelled_csv,
+)
 
 
 def make_window(value=10):
@@ -40,3 +44,26 @@ def test_anomaly_detector_evaluate_returns_metrics():
         [make_window(10), make_window(12), make_window(500)], [False, False, True]
     )
     assert set(report) == {"precision", "recall", "f1"}
+
+
+
+def test_evaluate_labelled_csv_uses_holdout_and_reports_metrics(tmp_path):
+    import csv
+
+    path = tmp_path / "labelled_windows.csv"
+    fields = list(FEATURE_COLUMNS) + ["label"]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for index in range(10):
+            writer.writerow({**make_window(10 + index % 2), "label": "normal"})
+        for index in range(3):
+            writer.writerow({**make_window(400 + index * 10), "label": "port_scan"})
+
+    report = evaluate_labelled_csv(path, contamination=0.1)
+    assert report["training_normal_windows"] >= 2
+    assert report["testing_normal_windows"] >= 1
+    assert report["testing_attack_windows"] == 3
+    assert 0.0 <= report["precision"] <= 1.0
+    assert 0.0 <= report["recall"] <= 1.0
+    assert 0.0 <= report["f1"] <= 1.0
