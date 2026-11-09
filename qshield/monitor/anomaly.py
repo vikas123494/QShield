@@ -1,7 +1,10 @@
 """Isolation Forest anomaly detection over QShield traffic feature windows."""
 from __future__ import annotations
 from dataclasses import dataclass
+import csv
 import math
+import random
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from sklearn.ensemble import IsolationForest
@@ -96,4 +99,64 @@ class IsolationForestAnomalyDetector:
         }
 
 
-__all__ = ["AnomalyResult", "FEATURE_COLUMNS", "IsolationForestAnomalyDetector"]
+def evaluate_labelled_csv(
+    path: str | Path,
+    *,
+    contamination: float = 0.05,
+    random_state: int = 42,
+) -> dict[str, float | int]:
+    """Train on normal rows and evaluate on held-out normal plus labelled attacks.
+
+    Rows labelled "unknown" are excluded. Attack labels are treated as positive
+    examples; the CSV's operator-supplied labels remain the ground truth.
+    At least three normal rows and one known-attack row are required.
+    """
+    normal_rows: list[dict[str, Any]] = []
+    attack_rows: list[dict[str, Any]] = []
+    with Path(path).open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        required = set(FEATURE_COLUMNS) | {"label"}
+        if not reader.fieldnames or not required.issubset(reader.fieldnames):
+            raise ValueError("labelled CSV is missing required feature or label columns")
+        for raw in reader:
+            label = (raw.get("label") or "").strip().lower()
+            if label == "unknown" or not label:
+                continue
+            row: dict[str, Any] = {}
+            for column in FEATURE_COLUMNS:
+                try:
+                    row[column] = float(raw[column])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"invalid numeric value in column {column}") from exc
+            if label == "normal":
+                normal_rows.append(row)
+            else:
+                attack_rows.append(row)
+
+    if len(normal_rows) < 3 or not attack_rows:
+        raise ValueError("CSV needs at least three normal rows and one known-attack row")
+
+    rng = random.Random(random_state)
+    rng.shuffle(normal_rows)
+    train_count = min(len(normal_rows) - 1, max(2, int(len(normal_rows) * 0.7)))
+    training = normal_rows[:train_count]
+    held_out_normal = normal_rows[train_count:]
+    testing = held_out_normal + attack_rows
+    expected = [False] * len(held_out_normal) + [True] * len(attack_rows)
+
+    detector = IsolationForestAnomalyDetector(
+        contamination=contamination, random_state=random_state
+    ).fit(training)
+    metrics = detector.evaluate(testing, expected)
+    return {
+        "training_normal_windows": len(training),
+        "testing_normal_windows": len(held_out_normal),
+        "testing_attack_windows": len(attack_rows),
+        **metrics,
+    }
+
+
+__all__ = [
+    "AnomalyResult", "FEATURE_COLUMNS", "IsolationForestAnomalyDetector",
+    "evaluate_labelled_csv",
+]
