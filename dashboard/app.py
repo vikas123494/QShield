@@ -111,14 +111,25 @@ def value(item: dict[str, Any], *keys: str, default: Any = "") -> Any:
 def alerts_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
     rows = [{
         "Time": value(row, "timestamp", "time", "created_at"),
-        "Alert": value(row, "type", "alert_type", "rule", "name", default="Security alert"),
+        "Alert": value(
+            row, "title", "type", "alert_type", "rule_id",
+            "rule", "name", default="Security alert"
+        ),
         "Source IP": value(row, "source_ip", "src_ip", "ip", "source"),
-        "Severity": str(value(row, "severity", "priority", default="LOW")).upper(),
+        "Severity": str(
+            value(row, "severity", "priority", default="LOW")
+        ).upper(),
         "Status": value(row, "status", "state", default="Open"),
-        "Evidence": value(row, "evidence", "description", "details"),
+        "Evidence": value(row, "description", "evidence", "details"),
     } for row in records]
-    return pd.DataFrame(rows, columns=["Time", "Alert", "Source IP", "Severity", "Status", "Evidence"])
 
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "Time", "Alert", "Source IP",
+            "Severity", "Status", "Evidence"
+        ]
+    )
 
 def sessions_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
     rows = [{
@@ -349,7 +360,8 @@ def evidence_page() -> None:
 def benchmarks_page() -> None:
     page_header("Cryptographic benchmarks", "Display measured algorithm sizes and timings supplied by Member 1.")
     if not BENCHMARKS_FILE.exists():
-        st.info("No benchmark file found. Member 1 should provide data/benchmarks.json with measured results.")
+        st.info("No benchmark file found. Generate real measurements from the project root with: python -m benchmarks.bench_pq_vs_classic --iterations 20 --output data/benchmarks.json")
+        st.caption("The benchmark runner measures this machine. Do not copy illustrative or synthetic timings into the dashboard.")
         return
     try:
         data = json.loads(BENCHMARKS_FILE.read_text(encoding="utf-8"))
