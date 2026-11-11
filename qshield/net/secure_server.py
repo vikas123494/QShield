@@ -190,27 +190,42 @@ def handle_client(conn, address, server_private, trusted_client):
                         # Switch only after both peers confirm the replacement key.
                         session_key = rekey_result.session_key
                         rekey_generation = next_generation
+                    except Exception as exc:
+                        try:
+                            acknowledge_command(
+                                pending_rekey,
+                                "failed",
+                                f"Re-key failed; closing session to prevent key desynchronisation: {exc}",
+                            )
+                        except Exception as ack_error:
+                            print("[RE-KEY ACK ERROR]", ack_error)
+                        try:
+                            log_event(
+                                "SESSION_REKEY_FAILED", "FAILED", source_ip, session_id,
+                                severity="CRITICAL", details=str(exc),
+                            )
+                        except Exception as log_error:
+                            print("[RE-KEY LOG ERROR]", log_error)
+                        raise ConnectionError("Authenticated re-key failed; session closed") from exc
+
+                    # Persistence/logging errors after key switch must not undo a completed
+                    # cryptographic exchange or desynchronise the client and server.
+                    try:
                         acknowledge_command(
                             pending_rekey,
                             "executed",
                             f"Authenticated post-quantum re-key completed (generation {rekey_generation})",
                         )
+                    except Exception as ack_error:
+                        print("[RE-KEY ACK ERROR]", ack_error)
+                    try:
                         log_event(
                             "SESSION_REKEY_SUCCESS", "SUCCESS", source_ip, session_id,
                             details=f"Authenticated ML-KEM re-key generation {rekey_generation} completed",
                         )
-                        print(f"[RE-KEY COMPLETE] {session_id[:8]} generation={rekey_generation}")
-                    except Exception as exc:
-                        acknowledge_command(
-                            pending_rekey,
-                            "failed",
-                            f"Re-key failed; closing session to prevent key desynchronisation: {exc}",
-                        )
-                        log_event(
-                            "SESSION_REKEY_FAILED", "FAILED", source_ip, session_id,
-                            severity="CRITICAL", details=str(exc),
-                        )
-                        raise ConnectionError("Authenticated re-key failed; session closed") from exc
+                    except Exception as log_error:
+                        print("[RE-KEY LOG ERROR]", log_error)
+                    print(f"[RE-KEY COMPLETE] {session_id[:8]} generation={rekey_generation}")
 
                 reply = f"Q-SHIELD received: {message}".encode("utf-8")
                 encrypted_reply = AES256GCM.encrypt(
