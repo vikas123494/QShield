@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import socket
 import tempfile
@@ -13,6 +13,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from qshield.net.protocol import send_message, receive_message
+from qshield.net.rekey import enqueue_rekey_request
 from response.blocklist import is_blocked
 
 
@@ -187,7 +188,7 @@ def check_connection_allowed(ip):
 # SESSION MANAGEMENT
 # --------------------------------------------------
 
-def update_session(session_id, status, remote_ip, started_at=None):
+def update_session(session_id, status, remote_ip, started_at=None, user_id=None):
     with session_lock:
         SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -219,7 +220,11 @@ def update_session(session_id, status, remote_ip, started_at=None):
 
         session = {
             "session_id": session_id,
-            "user_id": "unauthenticated",
+            "user_id": (
+                user_id if user_id is not None
+                else existing.get("user_id", "unauthenticated") if existing
+                else "unauthenticated"
+            ),
             "remote_ip": remote_ip,
             "status": status,
             "started_at": (
@@ -228,6 +233,10 @@ def update_session(session_id, status, remote_ip, started_at=None):
                 else started_at or datetime.now(timezone.utc).isoformat()
             )
         }
+
+        # Preserve additional session metadata written by other components.
+        if existing and existing.get("key_fingerprint"):
+            session["key_fingerprint"] = existing["key_fingerprint"]
 
         if status == "Disconnected":
             session["ended_at"] = datetime.now(timezone.utc).isoformat()
@@ -287,7 +296,11 @@ def load_processed_command_ids():
             except json.JSONDecodeError:
                 continue
 
-            if isinstance(result, dict) and result.get("command_id"):
+            if (
+                isinstance(result, dict)
+                and result.get("command_id")
+                and result.get("status") in {"executed", "rejected", "failed", "deferred"}
+            ):
                 processed.add(result["command_id"])
 
     return processed
@@ -361,10 +374,18 @@ def execute_command(command):
         return
 
     if command_type == "force_rekey":
+        queued = enqueue_rekey_request(session_id, command)
+        if not queued:
+            acknowledge_command(
+                command,
+                "rejected",
+                "Session is not an active secure session or already has a re-key request pending"
+            )
+            return
         acknowledge_command(
             command,
-            "deferred",
-            "Waiting for Member 1's cryptographic re-key implementation"
+            "queued",
+            "Accepted; authenticated re-key will run at the next client message boundary"
         )
         return
 

@@ -32,6 +32,10 @@ Thumbs.db
 data/*.jsonl
 data/blocklist.json
 data/commands.jsonl
-data/benchmarks.json
 # Runtime security event logs
 logs/
+
+*.qsk
+*.keystore
+data/received_files/
+data/test_files/
